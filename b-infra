@@ -1,0 +1,207 @@
+---
+- name: Update and upgrade apt packages
+  become: yes
+  apt:
+    upgrade: yes
+    update_cache: yes
+
+- name: install ethtool
+  become: yes
+  apt:
+    name:
+      - ethtool
+
+- name: Disable LRO and GRO
+  become: yes
+  command: ethtool -K ens5 gro off
+
+- name: same above
+  command: ethtool -K ens5 lro off
+
+
+# sudo apt-get install -y ethtool
+# sudo ethtool -K ens5 gro off
+# sudo ethtool -K ens5 lro off
+
+- name: Install snort pre-requisites
+  become: yes
+  apt:
+    name:
+      - build-essential
+      - libpcap-dev 
+      - libpcre3-dev 
+      - libdumbnet-dev
+      - bison flex
+      - zlib1g-dev
+      - net-tools
+    state: present
+  
+- name: Create a Directory ~/snort-src
+  become: yes
+  file:
+    path: ~/snort_src
+    state: directory
+    mode: 5775
+    chdir: ~/snort_src
+  
+- name: download dag-2.0.7
+  become: yes
+  get_url:
+    url: https://www.snort.org/downloads/snort/daq-2.0.7.tar.gz
+    dest: ~/snort_src
+    mode: '0440'
+
+
+- name: unarchive
+  unarchive: src=./daq-2.0.7.tar.gz
+             dest=.
+
+- name: change directory
+  become: yes
+  chdir: daq-2.0.7
+  command: ./configure
+
+- name: make
+  become: yes
+  command: make
+
+- name: makeinstall
+  command: make install
+
+    
+- name: Build and install Snort from source
+  become: yes
+  chdir: ~/snort_src
+  get_url:
+    url: https://www.snort.org/downloads/snort/snort-2.9.17.tar.gz
+
+- name: tar snort
+  become: yes
+  command: tar zxvf snort-2.9.17.tar.gz
+
+- name: chnage directory to snort
+  chdir: snort-2.9.17
+
+- name: some configure
+  become: yes
+  command: ./configure --enable-sourcefire --enable-reload --disable-open-appid
+
+- name: make-snort
+  command: make
+
+- name: makeinstall
+  command: make install
+
+- name: idconfig
+  command: ldconfig
+
+- name: link-directory
+  command: ln -s /usr/local/bin/snort /usr/sbin/snort
+
+- name: Create unprivileged Snort account and required initial files
+  become: yes
+  command: groupadd snort
+
+- name: add user and group
+  become: yes
+  command: useradd snort -r -s /sbin/nologin -c SNORT_IDS -g snort
+
+- name: directory making
+  become: yes
+  file:
+    path: /etc/snort
+    state: directory
+    mode: 5775
+
+
+- name: 
+  become: yes
+  file:
+    path: /etc/snort/rules
+    state: directory
+    mode: 5775
+    
+- name: prepro-rules
+  become: yes
+  file:
+    path: /etc/snort/preproc_rules
+    state: directory
+    mode: 5775
+
+- name: directory for snortlog
+  become: yes
+  file:
+    path: /var/log/snort
+    state: directory
+    mode: 5775
+
+- name: directory for dynamic rules
+  become: yes
+  file:
+    path: /usr/local/lib/snort_dynamicrules
+    state: directory
+    mode: 5775
+
+- name: create file
+  become: yes
+  file:
+    path: /etc/snort/rules/white_list.rules
+    state: touch
+
+- name: create file
+  become: yes
+  file:
+    path: /etc/snort/rules/black_list.rules
+    state: touch
+
+- name: create file
+  become: yes
+  file:
+    path: /etc/snort/rules/local.rules
+    state: touch
+
+- name: copy snort file 
+  copy:
+  src: ~/snort_src/snort-2.9.17/etc/*.conf* 
+  dest: /etc/snort
+
+- name: copy
+  copy:
+  src: ~/snort_src/snort-2.9.17/etc/*.map 
+  dest: /etc/snort
+
+#name: Update snort.conf
+#sudo sed -i ’s/include \$RULE\_PATH/#include \$RULE\_PATH/’ /etc/snort/snort.conf
+
+#Line 45: update HOME_NET to your internal subnet
+#Line 48: set to !$HOME_NET - i.e., every other network range not part of your home network
+#E.g., if your home network is in the 192.168.1.0/24 subnet,
+
+- name: replace my network cidr with homenet
+  lineinfile:
+    path: /etc/snort/snort.conf
+    regexp: '^(.*)ipvar HOME_NET(.*)'
+    line: ipvar HOME_NET 192.168.1.0/24
+
+- name: replace external network
+  lineinfile:
+    path: /etc/snort/snort.conf
+    regexp: '^(.*)ipvar EXTERNAL_NET(.*)'
+    line: ipvar EXTERNAL_NET !$HOME_NET
+
+- name: append rulepath variables
+  become: yes
+  blockinfile:
+    path: /etc/snort/snort.conf
+    block:
+      var RULE_PATH /etc/snort/rules
+      var SO_RULE_PATH /etc/snort/so_rules
+      var PREPROC_RULE_PATH /etc/snort/preproc_rules
+      var WHITE_LIST_PATH /etc/snort/rules
+      var BLACK_LIST_PATH /etc/snort/rules
+
+        #Uncomment line ==include $RULE_PATH/local.rules== to allow you to add your own custom rules to a local.rules file.
+
+- name: test snort
+  command: snort -T -c /etc/snort/snort.conf
+
